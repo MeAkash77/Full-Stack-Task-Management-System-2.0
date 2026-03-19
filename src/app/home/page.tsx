@@ -99,7 +99,7 @@ export default function Home() {
   >("all");
   const [priorityFilter, setPriorityFilter] = useState("all");
   const [sortBy, setSortBy] = useState("recent");
-  const [user, setUser] = useState<{ id: number; username: string } | null>(
+  const [user, setUser] = useState<{ id: string; username: string } | null>(
     null,
   );
   const [isDarkMode, setIsDarkMode] = useState(true);
@@ -114,9 +114,9 @@ export default function Home() {
   const router = useRouter();
   const todosRef = useRef<TodoItem[]>([]);
   const taskInputRef = useRef<HTMLInputElement | null>(null);
-  const itemRefs = useRef<Record<number, React.RefObject<HTMLDivElement>>>({});
+  const itemRefs = useRef<Record<string, React.RefObject<HTMLDivElement>>>({});
 
-  const getNodeRef = (id: number) => {
+  const getNodeRef = (id: string) => {
     if (!itemRefs.current[id]) {
       itemRefs.current[id] = React.createRef<HTMLDivElement>();
     }
@@ -130,24 +130,35 @@ export default function Home() {
   };
 
   const logout = () => {
+    localStorage.removeItem("accessToken");
+    localStorage.removeItem("refreshToken");
     localStorage.removeItem("currentUser");
     setUser(null);
     router.push("/auth/login");
   };
 
-  const fetchTodos = async (userId: number, showLoading = false) => {
+  const fetchTodos = async (userId: string, showLoading = false) => {
     if (showLoading) setLoading(true);
 
     try {
-      const response = await fetch(`/api/todos?userId=${userId}`);
-      const data: TodoItem[] = await response.json();
-
-      if (!isEqual(data, todosRef.current)) {
-        todosRef.current = data;
-        setTodos(data);
+      const accessToken = localStorage.getItem("accessToken");
+      const response = await fetch(`/api/todos?userId=${userId}`, {
+        headers: {
+          "Authorization": `Bearer ${accessToken}`
+        }
+      });
+      const data = await response.json();
+      
+      // Ensure we always have an array
+      const todosArray = Array.isArray(data) ? data : [];
+      
+      if (!isEqual(todosArray, todosRef.current)) {
+        todosRef.current = todosArray;
+        setTodos(todosArray);
       }
     } catch (err) {
       console.error("Error fetching todos:", err);
+      setTodos([]); // Reset to empty array on error
     } finally {
       if (showLoading) setLoading(false);
     }
@@ -171,10 +182,13 @@ export default function Home() {
           : "Good Morning",
     );
 
+    // Check for both user and token
+    const accessToken = localStorage.getItem("accessToken");
     const storedUser = JSON.parse(
       localStorage.getItem("currentUser") || "null",
     );
-    if (!storedUser) {
+    
+    if (!storedUser || !accessToken) {
       router.push("/auth/login");
       return;
     }
@@ -182,8 +196,11 @@ export default function Home() {
     setUser(storedUser);
     fetchTodos(storedUser.id, true);
 
-    const interval = setInterval(() => fetchTodos(storedUser.id), 8000);
-    return () => clearInterval(interval);
+    // ✅ FIXED: REMOVED the auto-refresh interval that was causing blinking
+    // const interval = setInterval(() => fetchTodos(storedUser.id), 8000);
+    // return () => clearInterval(interval);
+    
+    // No cleanup needed now
   }, [router]);
 
   const addTodo = async () => {
@@ -191,9 +208,13 @@ export default function Home() {
     setSaving(true);
 
     try {
+      const accessToken = localStorage.getItem("accessToken");
       const response = await fetch(`/api/todos`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { 
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${accessToken}`
+        },
         body: JSON.stringify({
           userId: user.id,
           task,
@@ -211,7 +232,7 @@ export default function Home() {
         setPriority("medium");
         setDueDate("");
         setCategory("General");
-        fetchTodos(user.id);
+        await fetchTodos(user.id); // Refresh after adding
         taskInputRef.current?.focus();
       }
     } catch (err) {
@@ -221,20 +242,24 @@ export default function Home() {
     }
   };
 
-  const toggleCompletion = async (todoId: number) => {
+  const toggleCompletion = async (todoId: string) => {
     if (!user) return;
     setSaving(true);
     try {
+      const accessToken = localStorage.getItem("accessToken");
       const response = await fetch(`/api/todos`, {
         method: "PATCH",
-        headers: { "Content-Type": "application/json" },
+        headers: { 
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${accessToken}`
+        },
         body: JSON.stringify({
           userId: user.id,
           todoId,
           completed: !todos.find((t) => t.id === todoId)?.completed,
         }),
       });
-      if (response.ok) fetchTodos(user.id);
+      if (response.ok) await fetchTodos(user.id);
     } catch (err) {
       console.error("Error toggling completion:", err);
     } finally {
@@ -242,19 +267,23 @@ export default function Home() {
     }
   };
 
-  const deleteTodo = async (todoId: number) => {
+  const deleteTodo = async (todoId: string) => {
     if (!user) return;
     setSaving(true);
     try {
+      const accessToken = localStorage.getItem("accessToken");
       const response = await fetch(`/api/todos`, {
         method: "DELETE",
-        headers: { "Content-Type": "application/json" },
+        headers: { 
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${accessToken}`
+        },
         body: JSON.stringify({
           userId: user.id,
           todoId,
         }),
       });
-      if (response.ok) fetchTodos(user.id);
+      if (response.ok) await fetchTodos(user.id);
     } catch (err) {
       console.error("Error deleting todo:", err);
     } finally {
@@ -266,9 +295,13 @@ export default function Home() {
     if (!editingTodo || !user) return;
     setSaving(true);
     try {
+      const accessToken = localStorage.getItem("accessToken");
       const response = await fetch(`/api/todos`, {
         method: "PUT",
-        headers: { "Content-Type": "application/json" },
+        headers: { 
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${accessToken}`
+        },
         body: JSON.stringify({
           userId: user.id,
           todoId: editingTodo.id,
@@ -282,7 +315,7 @@ export default function Home() {
       });
 
       if (response.ok) {
-        fetchTodos(user.id);
+        await fetchTodos(user.id);
         setEditOpen(false);
         setEditingTodo(null);
       }
@@ -301,6 +334,9 @@ export default function Home() {
   }, [today]);
 
   const filteredTodos = useMemo(() => {
+    // Ensure todos is an array
+    const todosArray = Array.isArray(todos) ? todos : [];
+    
     const order: Record<TodoPriority, number> = {
       high: 0,
       medium: 1,
@@ -315,7 +351,7 @@ export default function Home() {
       return taskText.includes(searchText) || notesText.includes(searchText);
     };
 
-    const filtered = todos
+    const filtered = todosArray
       .filter((todo) => {
         if (statusFilter === "completed" && !todo.completed) return false;
         if (statusFilter === "active" && todo.completed) return false;
@@ -371,7 +407,9 @@ export default function Home() {
     todayEnd,
   ]);
 
-  const overdueTodos = todos
+  const todosArray = Array.isArray(todos) ? todos : [];
+
+  const overdueTodos = todosArray
     .filter((todo) => {
       const date = parseDate(todo.dueDate);
       return date && date < today && !todo.completed;
@@ -382,7 +420,7 @@ export default function Home() {
         (parseDate(b.dueDate)?.getTime() ?? 0),
     );
 
-  const todayTodos = todos.filter((todo) => {
+  const todayTodos = todosArray.filter((todo) => {
     const date = parseDate(todo.dueDate);
     return (
       date &&
@@ -392,7 +430,7 @@ export default function Home() {
     );
   });
 
-  const upcomingTodos = todos
+  const upcomingTodos = todosArray
     .filter((todo) => {
       const date = parseDate(todo.dueDate);
       return date && date > todayEnd && !todo.completed;
@@ -404,12 +442,12 @@ export default function Home() {
     )
     .slice(0, 5);
 
-  const completedCount = todos.filter((todo) => todo.completed).length;
-  const total = todos.length;
+  const completedCount = todosArray.filter((todo) => todo.completed).length;
+  const total = todosArray.length;
   const completionRate = total ? Math.round((completedCount / total) * 100) : 0;
 
-  // Ensure unique categories
   const uniqueCategories = useMemo(() => {
+    if (!Array.isArray(todos)) return [];
     return Array.from(new Set(todos.map((t) => t.category).filter(Boolean)));
   }, [todos]);
 
@@ -454,7 +492,7 @@ export default function Home() {
     },
   } : {};
 
-  // Show a simple loading state on first render - PLAIN HTML ONLY, no MUI components!
+  // Show a simple loading state on first render
   if (!mounted) {
     return (
       <div style={{ 
@@ -591,7 +629,7 @@ export default function Home() {
                         <Button
                           variant="outlined"
                           size="small"
-                          onClick={() => fetchTodos(user?.id || 0, true)}
+                          onClick={() => fetchTodos(user?.id || "", true)}
                           startIcon={<Refresh />}
                           sx={{
                             color: "#fff",
@@ -633,6 +671,8 @@ export default function Home() {
                   <Grid container spacing={2}>
                     <Grid item xs={12} md={7}>
                       <TextField
+                        id="task"
+                        name="task"
                         fullWidth
                         label="Task"
                         placeholder="Write meeting notes, prep deck, book flights..."
@@ -640,6 +680,10 @@ export default function Home() {
                         inputRef={taskInputRef}
                         onChange={(e) => setTask(e.target.value)}
                         sx={fieldBaseSx}
+                        disabled={saving}
+                        inputProps={{
+                          'aria-label': 'task description',
+                        }}
                         InputProps={{
                           startAdornment: (
                             <InputAdornment position="start">
@@ -653,14 +697,22 @@ export default function Home() {
                       <FormControl fullWidth sx={fieldBaseSx}>
                         <InputLabel
                           sx={{ color: theme.palette.text.secondary }}
+                          id="category-label"
                         >
                           Category
                         </InputLabel>
                         <Select
+                          labelId="category-label"
+                          id="category"
+                          name="category"
                           value={category}
                           label="Category"
                           onChange={(e) => setCategory(e.target.value)}
                           sx={fieldBaseSx}
+                          disabled={saving}
+                          inputProps={{
+                            'aria-label': 'category',
+                          }}
                         >
                           {categories.map((cat) => (
                             <MenuItem key={`new-cat-${cat}`} value={cat}>
@@ -674,16 +726,24 @@ export default function Home() {
                       <FormControl fullWidth sx={fieldBaseSx}>
                         <InputLabel
                           sx={{ color: theme.palette.text.secondary }}
+                          id="priority-label"
                         >
                           Priority
                         </InputLabel>
                         <Select
+                          labelId="priority-label"
+                          id="priority"
+                          name="priority"
                           value={priority}
                           label="Priority"
                           onChange={(e) =>
                             setPriority(e.target.value as TodoPriority)
                           }
                           sx={fieldBaseSx}
+                          disabled={saving}
+                          inputProps={{
+                            'aria-label': 'priority',
+                          }}
                         >
                           <MenuItem key="priority-high" value="high">High</MenuItem>
                           <MenuItem key="priority-medium" value="medium">Medium</MenuItem>
@@ -693,6 +753,8 @@ export default function Home() {
                     </Grid>
                     <Grid item xs={12} md={4}>
                       <TextField
+                        id="due-date"
+                        name="dueDate"
                         fullWidth
                         label="Due date"
                         type="date"
@@ -700,16 +762,26 @@ export default function Home() {
                         value={dueDate}
                         onChange={(e) => setDueDate(e.target.value)}
                         sx={fieldBaseSx}
+                        disabled={saving}
+                        inputProps={{
+                          'aria-label': 'due date',
+                        }}
                       />
                     </Grid>
                     <Grid item xs={12} md={4}>
                       <TextField
+                        id="notes"
+                        name="notes"
                         fullWidth
                         label="Notes"
                         placeholder="Add context or links"
                         value={notes}
                         onChange={(e) => setNotes(e.target.value)}
                         sx={fieldBaseSx}
+                        disabled={saving}
+                        inputProps={{
+                          'aria-label': 'notes',
+                        }}
                       />
                     </Grid>
                   </Grid>
@@ -726,6 +798,7 @@ export default function Home() {
                       variant="contained"
                       startIcon={<Add />}
                       onClick={addTodo}
+                      disabled={saving}
                       sx={{ color: "#ffffff" }}
                     >
                       Add to list
@@ -756,10 +829,15 @@ export default function Home() {
                       justifyContent="flex-end"
                     >
                       <TextField
+                        id="search"
+                        name="search"
                         placeholder="Search title or notes"
                         value={searchTerm}
                         onChange={(e) => setSearchTerm(e.target.value)}
                         size="small"
+                        inputProps={{
+                          'aria-label': 'search tasks',
+                        }}
                         InputProps={{
                           startAdornment: (
                             <InputAdornment position="start">
@@ -769,11 +847,17 @@ export default function Home() {
                         }}
                       />
                       <FormControl size="small" sx={{ minWidth: 160 }}>
-                        <InputLabel>Sort</InputLabel>
+                        <InputLabel id="sort-label">Sort</InputLabel>
                         <Select
+                          labelId="sort-label"
+                          id="sort"
+                          name="sort"
                           value={sortBy}
                           label="Sort"
                           onChange={(e) => setSortBy(e.target.value)}
+                          inputProps={{
+                            'aria-label': 'sort by',
+                          }}
                         >
                           <MenuItem key="sort-recent" value="recent">Newest first</MenuItem>
                           <MenuItem key="sort-dueDate" value="dueDate">Due date</MenuItem>
@@ -784,7 +868,7 @@ export default function Home() {
                       <Button
                         variant="outlined"
                         startIcon={<Refresh />}
-                        onClick={() => fetchTodos(user?.id || 0, true)}
+                        onClick={() => fetchTodos(user?.id || "", true)}
                       >
                         Sync
                       </Button>
@@ -948,6 +1032,7 @@ export default function Home() {
                                       todo.completed ? "primary" : "default"
                                     }
                                     onClick={() => toggleCompletion(todo.id)}
+                                    aria-label={todo.completed ? "mark as active" : "mark as done"}
                                   >
                                     {todo.completed ? (
                                       <CheckCircle />
@@ -1024,6 +1109,7 @@ export default function Home() {
                                       setEditingTodo(todo);
                                       setEditOpen(true);
                                     }}
+                                    aria-label="edit task"
                                   >
                                     <Edit />
                                   </IconButton>
@@ -1032,6 +1118,7 @@ export default function Home() {
                                   <IconButton
                                     color="error"
                                     onClick={() => deleteTodo(todo.id)}
+                                    aria-label="delete task"
                                   >
                                     <Delete />
                                   </IconButton>
@@ -1250,6 +1337,8 @@ export default function Home() {
           <DialogContent dividers>
             <Stack spacing={2} mt={1}>
               <TextField
+                id="edit-task"
+                name="editTask"
                 label="Task"
                 fullWidth
                 value={editingTodo?.task || ""}
@@ -1260,10 +1349,16 @@ export default function Home() {
                       : null,
                   )
                 }
+                inputProps={{
+                  'aria-label': 'edit task',
+                }}
               />
               <FormControl fullWidth>
-                <InputLabel>Category</InputLabel>
+                <InputLabel id="edit-category-label">Category</InputLabel>
                 <Select
+                  labelId="edit-category-label"
+                  id="edit-category"
+                  name="editCategory"
                   label="Category"
                   value={editingTodo?.category || ""}
                   onChange={(e) =>
@@ -1273,6 +1368,9 @@ export default function Home() {
                         : null,
                     )
                   }
+                  inputProps={{
+                    'aria-label': 'edit category',
+                  }}
                 >
                   {categories.map((cat) => (
                     <MenuItem key={`edit-cat-${cat}`} value={cat}>
@@ -1282,8 +1380,11 @@ export default function Home() {
                 </Select>
               </FormControl>
               <FormControl fullWidth>
-                <InputLabel>Priority</InputLabel>
+                <InputLabel id="edit-priority-label">Priority</InputLabel>
                 <Select
+                  labelId="edit-priority-label"
+                  id="edit-priority"
+                  name="editPriority"
                   label="Priority"
                   value={editingTodo?.priority || "medium"}
                   onChange={(e) =>
@@ -1296,6 +1397,9 @@ export default function Home() {
                         : null,
                     )
                   }
+                  inputProps={{
+                    'aria-label': 'edit priority',
+                  }}
                 >
                   <MenuItem key="edit-priority-high" value="high">High</MenuItem>
                   <MenuItem key="edit-priority-medium" value="medium">Medium</MenuItem>
@@ -1303,6 +1407,8 @@ export default function Home() {
                 </Select>
               </FormControl>
               <TextField
+                id="edit-due-date"
+                name="editDueDate"
                 label="Due date"
                 type="date"
                 InputLabelProps={{ shrink: true }}
@@ -1314,8 +1420,13 @@ export default function Home() {
                       : null,
                   )
                 }
+                inputProps={{
+                  'aria-label': 'edit due date',
+                }}
               />
               <TextField
+                id="edit-notes"
+                name="editNotes"
                 label="Notes"
                 fullWidth
                 value={editingTodo?.notes || ""}
@@ -1326,6 +1437,9 @@ export default function Home() {
                       : null,
                   )
                 }
+                inputProps={{
+                  'aria-label': 'edit notes',
+                }}
               />
             </Stack>
           </DialogContent>

@@ -27,7 +27,7 @@ import NavBar from "../components/NavBar";
 import { getAppTheme } from "../theme";
 import { TodoItem } from "@/types/todo";
 
-const parseDate = (value?: string) => {
+const parseDate = (value?: string | null) => {
   if (!value) return null;
   const parsed = new Date(value);
   return Number.isNaN(parsed.getTime()) ? null : parsed;
@@ -37,13 +37,17 @@ const startOfDay = (date: Date) =>
   new Date(date.getFullYear(), date.getMonth(), date.getDate());
 
 export default function InsightsPage() {
+  const [mounted, setMounted] = useState(false);
   const [todos, setTodos] = useState<TodoItem[]>([]);
-  const [user, setUser] = useState<{ id: number; username: string } | null>(
+  const [user, setUser] = useState<{ id: string; username: string } | null>(
     null,
   );
-  const [isDarkMode, setIsDarkMode] = useState(false);
+  const [isDarkMode, setIsDarkMode] = useState(true);
   const [loading, setLoading] = useState(true);
-  const theme = useMemo(() => getAppTheme(isDarkMode), [isDarkMode]);
+  const theme = useMemo(() => 
+    mounted ? getAppTheme(isDarkMode) : getAppTheme(true), 
+    [isDarkMode, mounted]
+  );
   const router = useRouter();
 
   const sectionPaperSx = {
@@ -74,25 +78,38 @@ export default function InsightsPage() {
   };
 
   const logout = () => {
+    localStorage.removeItem("accessToken");
+    localStorage.removeItem("refreshToken");
     localStorage.removeItem("currentUser");
     setUser(null);
     router.push("/auth/login");
   };
 
-  const fetchTodos = async (userId: number, showLoading = false) => {
+  const fetchTodos = async (userId: string, showLoading = false) => {
     if (showLoading) setLoading(true);
     try {
-      const response = await fetch(`/api/todos?userId=${userId}`);
-      const data: TodoItem[] = await response.json();
-      setTodos(data);
+      const accessToken = localStorage.getItem("accessToken");
+      const response = await fetch(`/api/todos?userId=${userId}`, {
+        headers: {
+          "Authorization": `Bearer ${accessToken}`
+        }
+      });
+      const data = await response.json();
+      
+      // ✅ Ensure we always have an array
+      const todosArray = Array.isArray(data) ? data : [];
+      setTodos(todosArray);
     } catch (err) {
       console.error("Error fetching todos:", err);
+      setTodos([]); // Reset to empty array on error
     } finally {
       if (showLoading) setLoading(false);
     }
   };
 
   useEffect(() => {
+    setMounted(true);
+    
     const storedDarkMode = JSON.parse(
       localStorage.getItem("darkMode") || "true",
     );
@@ -100,13 +117,16 @@ export default function InsightsPage() {
   }, []);
 
   useEffect(() => {
+    const accessToken = localStorage.getItem("accessToken");
     const storedUser = JSON.parse(
       localStorage.getItem("currentUser") || "null",
     );
-    if (!storedUser) {
+    
+    if (!storedUser || !accessToken) {
       router.push("/auth/login");
       return;
     }
+    
     setUser(storedUser);
     fetchTodos(storedUser.id, true);
   }, [router]);
@@ -118,15 +138,18 @@ export default function InsightsPage() {
     return end;
   }, [today]);
 
+  // ✅ FIXED: Safe stats calculation with array checks
   const stats = useMemo(() => {
-    const total = todos.length;
-    const completed = todos.filter((t) => t.completed).length;
+    const todosArray = Array.isArray(todos) ? todos : [];
+    
+    const total = todosArray.length;
+    const completed = todosArray.filter((t) => t.completed).length;
     const active = total - completed;
-    const overdue = todos.filter((t) => {
+    const overdue = todosArray.filter((t) => {
       const date = parseDate(t.dueDate);
       return date && date < today && !t.completed;
     }).length;
-    const todayCount = todos.filter((t) => {
+    const todayCount = todosArray.filter((t) => {
       const date = parseDate(t.dueDate);
       return (
         date &&
@@ -135,19 +158,19 @@ export default function InsightsPage() {
         !t.completed
       );
     }).length;
-    const highPriority = todos.filter(
+    const highPriority = todosArray.filter(
       (t) => !t.completed && (t.priority || "medium") === "high",
     ).length;
 
     const categoryMap: Record<string, number> = {};
-    todos.forEach((t) => {
+    todosArray.forEach((t) => {
       categoryMap[t.category] = (categoryMap[t.category] || 0) + 1;
     });
 
     const priorityMap = {
-      high: todos.filter((t) => (t.priority || "medium") === "high").length,
-      medium: todos.filter((t) => (t.priority || "medium") === "medium").length,
-      low: todos.filter((t) => (t.priority || "medium") === "low").length,
+      high: todosArray.filter((t) => (t.priority || "medium") === "high").length,
+      medium: todosArray.filter((t) => (t.priority || "medium") === "medium").length,
+      low: todosArray.filter((t) => (t.priority || "medium") === "low").length,
     };
 
     return {
@@ -170,6 +193,21 @@ export default function InsightsPage() {
         .sort((a, b) => b.count - a.count),
     [stats.categoryMap],
   );
+
+  // Show loading state on first render
+  if (!mounted || loading) {
+    return (
+      <div style={{ 
+        minHeight: "100vh", 
+        display: "flex", 
+        alignItems: "center", 
+        justifyContent: "center",
+        fontFamily: "system-ui, -apple-system, sans-serif"
+      }}>
+        <div>Loading insights...</div>
+      </div>
+    );
+  }
 
   return (
     <ThemeProvider theme={theme}>
@@ -245,7 +283,7 @@ export default function InsightsPage() {
                     variant="contained"
                     color="secondary"
                     startIcon={<Refresh />}
-                    onClick={() => fetchTodos(user?.id || 0, true)}
+                    onClick={() => fetchTodos(user?.id || "", true)}
                     sx={{ color: "#ffffff" }}
                   >
                     Refresh data

@@ -1,11 +1,47 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { verifyAccessToken } from "@/lib/auth";
+
+// Helper function to verify token and get userId
+async function verifyTokenAndGetUserId(request: Request) {
+  const authHeader = request.headers.get("authorization");
+  
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    return { error: "Unauthorized", status: 401 };
+  }
+
+  const token = authHeader.split(" ")[1];
+  const decoded = verifyAccessToken(token);
+  
+  if (!decoded || typeof decoded === 'string' || !decoded.userId) {
+    return { error: "Invalid token", status: 403 };
+  }
+
+  return { userId: decoded.userId };
+}
 
 // CREATE TODO
 export async function POST(request: Request) {
   try {
+    // Verify authentication
+    const auth = await verifyTokenAndGetUserId(request);
+    if (auth.error) {
+      return NextResponse.json(
+        { error: auth.error },
+        { status: auth.status }
+      );
+    }
+
     const { userId, task, category, priority, dueDate, notes } =
       await request.json();
+
+    // Ensure the userId from token matches the request
+    if (auth.userId !== userId) {
+      return NextResponse.json(
+        { error: "Forbidden" },
+        { status: 403 }
+      );
+    }
 
     if (!userId || !task) {
       return NextResponse.json(
@@ -14,7 +50,7 @@ export async function POST(request: Request) {
       );
     }
 
-    // ✅ FIXED: Save all fields, not just title
+    // Create todo with all fields
     const newTodo = await prisma.task.create({
       data: {
         title: task,
@@ -27,7 +63,7 @@ export async function POST(request: Request) {
       },
     });
 
-    // Format the response to match your TodoItem type
+    // Format the response to match TodoItem type
     const formattedTodo = {
       id: newTodo.id,
       task: newTodo.title,
@@ -52,22 +88,32 @@ export async function POST(request: Request) {
 // GET TODOS
 export async function GET(request: Request) {
   try {
-    const { searchParams } = new URL(request.url);
-    const userId = searchParams.get("userId");
-
-    if (!userId) {
+    // Verify authentication
+    const auth = await verifyTokenAndGetUserId(request);
+    if (auth.error) {
       return NextResponse.json(
-        { error: "User ID is required" },
-        { status: 400 }
+        { error: auth.error },
+        { status: auth.status }
+      );
+    }
+
+    const { searchParams } = new URL(request.url);
+    const requestedUserId = searchParams.get("userId");
+
+    // Ensure users can only access their own todos
+    if (requestedUserId && requestedUserId !== auth.userId) {
+      return NextResponse.json(
+        { error: "Forbidden" },
+        { status: 403 }
       );
     }
 
     const todos = await prisma.task.findMany({
-      where: { userId },
+      where: { userId: auth.userId },
       orderBy: { createdAt: "desc" },
     });
 
-    // ✅ FIXED: Format todos to match your TodoItem type
+    // Format todos to match TodoItem type
     const formattedTodos = todos.map(todo => ({
       id: todo.id,
       task: todo.title,
@@ -79,25 +125,48 @@ export async function GET(request: Request) {
       createdAt: todo.createdAt,
     }));
 
+    // Always return an array (even if empty)
     return NextResponse.json(formattedTodos);
   } catch (error) {
     console.error("Error fetching todos:", error);
-    return NextResponse.json(
-      { error: "Internal server error" },
-      { status: 500 }
-    );
+    // Return empty array on error instead of error object
+    return NextResponse.json([]);
   }
 }
 
 // UPDATE TODO (toggle completed)
 export async function PATCH(request: Request) {
   try {
+    // Verify authentication
+    const auth = await verifyTokenAndGetUserId(request);
+    if (auth.error) {
+      return NextResponse.json(
+        { error: auth.error },
+        { status: auth.status }
+      );
+    }
+
     const { todoId, completed } = await request.json();
 
     if (!todoId) {
       return NextResponse.json(
         { error: "Todo ID is required" },
         { status: 400 }
+      );
+    }
+
+    // Verify the todo belongs to the authenticated user
+    const existingTodo = await prisma.task.findFirst({
+      where: { 
+        id: todoId,
+        userId: auth.userId
+      }
+    });
+
+    if (!existingTodo) {
+      return NextResponse.json(
+        { error: "Todo not found" },
+        { status: 404 }
       );
     }
 
@@ -130,6 +199,15 @@ export async function PATCH(request: Request) {
 // UPDATE FULL TODO
 export async function PUT(request: Request) {
   try {
+    // Verify authentication
+    const auth = await verifyTokenAndGetUserId(request);
+    if (auth.error) {
+      return NextResponse.json(
+        { error: auth.error },
+        { status: auth.status }
+      );
+    }
+
     const { todoId, task, category, priority, dueDate, notes, completed } = await request.json();
 
     if (!todoId) {
@@ -139,7 +217,22 @@ export async function PUT(request: Request) {
       );
     }
 
-    // ✅ FIXED: Update all fields
+    // Verify the todo belongs to the authenticated user
+    const existingTodo = await prisma.task.findFirst({
+      where: { 
+        id: todoId,
+        userId: auth.userId
+      }
+    });
+
+    if (!existingTodo) {
+      return NextResponse.json(
+        { error: "Todo not found" },
+        { status: 404 }
+      );
+    }
+
+    // Update all fields
     const updated = await prisma.task.update({
       where: { id: todoId },
       data: {
@@ -176,12 +269,36 @@ export async function PUT(request: Request) {
 // DELETE TODO
 export async function DELETE(request: Request) {
   try {
+    // Verify authentication
+    const auth = await verifyTokenAndGetUserId(request);
+    if (auth.error) {
+      return NextResponse.json(
+        { error: auth.error },
+        { status: auth.status }
+      );
+    }
+
     const { todoId } = await request.json();
 
     if (!todoId) {
       return NextResponse.json(
         { error: "Todo ID is required" },
         { status: 400 }
+      );
+    }
+
+    // Verify the todo belongs to the authenticated user
+    const existingTodo = await prisma.task.findFirst({
+      where: { 
+        id: todoId,
+        userId: auth.userId
+      }
+    });
+
+    if (!existingTodo) {
+      return NextResponse.json(
+        { error: "Todo not found" },
+        { status: 404 }
       );
     }
 

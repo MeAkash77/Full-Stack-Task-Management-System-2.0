@@ -33,12 +33,12 @@ export default function RegisterPage() {
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [isDarkMode, setIsDarkMode] = useState(true);
-  const [user, setUser] = useState<{ id: number; username: string } | null>(
+  const [user, setUser] = useState<{ id: string; username: string } | null>(
     null,
   );
   const router = useRouter();
   
-  const theme = useMemo(() => getAppTheme(isDarkMode), [isDarkMode]);
+  const theme = useMemo(() => mounted ? getAppTheme(isDarkMode) : getAppTheme(true), [isDarkMode, mounted]);
 
   // Load saved preferences after mount
   useEffect(() => {
@@ -49,11 +49,17 @@ export default function RegisterPage() {
     );
     setIsDarkMode(storedDarkMode);
 
+    // Check if user is already logged in
     const storedUser = JSON.parse(
       localStorage.getItem("currentUser") || "null"
     );
-    if (storedUser) setUser(storedUser);
-  }, []);
+    const accessToken = localStorage.getItem("accessToken");
+    
+    if (storedUser && accessToken) {
+      setUser(storedUser);
+      router.push("/home");
+    }
+  }, [router]);
 
   const toggleDarkMode = () => {
     const next = !isDarkMode;
@@ -62,6 +68,8 @@ export default function RegisterPage() {
   };
 
   const logout = () => {
+    localStorage.removeItem("accessToken");
+    localStorage.removeItem("refreshToken");
     localStorage.removeItem("currentUser");
     setUser(null);
     router.push("/auth/login");
@@ -115,6 +123,7 @@ export default function RegisterPage() {
 
       if (response.ok) {
         console.log("Registration successful:", data);
+        // Redirect to login page with success message
         router.push("/auth/login?registered=true");
       } else {
         setError(data.error || "Registration failed");
@@ -135,7 +144,7 @@ export default function RegisterPage() {
         display: "flex", 
         alignItems: "center", 
         justifyContent: "center",
-        fontFamily: "sans-serif"
+        fontFamily: "system-ui, -apple-system, sans-serif"
       }}>
         <div>Loading...</div>
       </div>
@@ -236,6 +245,8 @@ export default function RegisterPage() {
 
             <Stack spacing={2}>
               <TextField
+                id="username"
+                name="username"
                 label="Username"
                 fullWidth
                 value={username}
@@ -243,8 +254,15 @@ export default function RegisterPage() {
                 onKeyDown={(e) => e.key === "Enter" && handleRegister()}
                 disabled={isLoading}
                 required
+                autoComplete="username"
+                inputProps={{
+                  'aria-label': 'username',
+                  minLength: 1,
+                }}
               />
               <TextField
+                id="password"
+                name="password"
                 label="Password"
                 type={showPassword ? "text" : "password"}
                 fullWidth
@@ -253,13 +271,18 @@ export default function RegisterPage() {
                 onKeyDown={(e) => e.key === "Enter" && handleRegister()}
                 disabled={isLoading}
                 required
-                inputProps={{ minLength: 6 }}
+                autoComplete="new-password"
+                inputProps={{
+                  'aria-label': 'password',
+                  minLength: 6,
+                }}
                 InputProps={{
                   endAdornment: (
                     <InputAdornment position="end">
                       <IconButton
                         onClick={() => setShowPassword((prev) => !prev)}
                         edge="end"
+                        aria-label="toggle password visibility"
                       >
                         {showPassword ? <VisibilityOff /> : <Visibility />}
                       </IconButton>
@@ -268,6 +291,8 @@ export default function RegisterPage() {
                 }}
               />
               <TextField
+                id="confirm-password"
+                name="confirm-password"
                 label="Confirm password"
                 type={showConfirmPassword ? "text" : "password"}
                 fullWidth
@@ -276,12 +301,18 @@ export default function RegisterPage() {
                 onKeyDown={(e) => e.key === "Enter" && handleRegister()}
                 disabled={isLoading}
                 required
+                autoComplete="new-password"
+                inputProps={{
+                  'aria-label': 'confirm password',
+                  minLength: 6,
+                }}
                 InputProps={{
                   endAdornment: (
                     <InputAdornment position="end">
                       <IconButton
                         onClick={() => setShowConfirmPassword((prev) => !prev)}
                         edge="end"
+                        aria-label="toggle confirm password visibility"
                       >
                         {showConfirmPassword ? (
                           <VisibilityOff />

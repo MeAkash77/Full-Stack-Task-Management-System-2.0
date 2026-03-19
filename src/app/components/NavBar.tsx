@@ -33,8 +33,9 @@ import {
   Person,
 } from "@mui/icons-material";
 
+// ✅ FIXED: Changed id from number to string to match UUID from database
 interface NavBarProps {
-  user: { id: number; username: string } | null;
+  user: { id: string; username: string } | null;
   isDarkMode: boolean;
   toggleDarkMode: () => void;
   onLogout: () => void;
@@ -270,11 +271,11 @@ export default function NavBar({
                       fontSize: 14,
                     }}
                   >
-                    {user.username.charAt(0).toUpperCase()}
+                    {user.username?.charAt(0).toUpperCase() || "U"}
                   </Avatar>
                 }
               >
-                {user.username}
+                {user.username || "User"}
               </Button>
               <Menu
                 anchorEl={menuAnchor}

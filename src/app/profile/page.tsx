@@ -24,13 +24,13 @@ import {
   AccessTime,
   Refresh,
   Insights,
-  Timeline as TimelineIcon,
+  TimelineIcon,
 } from "@mui/icons-material";
 import NavBar from "../components/NavBar";
 import { getAppTheme } from "../theme";
 import { TodoItem } from "@/types/todo";
 
-const parseDate = (value?: string) => {
+const parseDate = (value?: string | null) => {
   if (!value) return null;
   const parsed = new Date(value);
   return Number.isNaN(parsed.getTime()) ? null : parsed;
@@ -40,14 +40,18 @@ const startOfDay = (date: Date) =>
   new Date(date.getFullYear(), date.getMonth(), date.getDate());
 
 export default function ProfilePage() {
+  const [mounted, setMounted] = useState(false);
   const [todos, setTodos] = useState<TodoItem[]>([]);
-  const [user, setUser] = useState<{ id: number; username: string } | null>(
+  const [user, setUser] = useState<{ id: string; username: string } | null>(
     null,
   );
-  const [isDarkMode, setIsDarkMode] = useState(false);
+  const [isDarkMode, setIsDarkMode] = useState(true);
   const [loading, setLoading] = useState(true);
   const router = useRouter();
-  const theme = useMemo(() => getAppTheme(isDarkMode), [isDarkMode]);
+  const theme = useMemo(() => 
+    mounted ? getAppTheme(isDarkMode) : getAppTheme(true), 
+    [isDarkMode, mounted]
+  );
 
   const sectionPaperSx = {
     backgroundColor: isDarkMode ? "#0f1f1a" : "#ffffff",
@@ -77,25 +81,38 @@ export default function ProfilePage() {
   };
 
   const logout = () => {
+    localStorage.removeItem("accessToken");
+    localStorage.removeItem("refreshToken");
     localStorage.removeItem("currentUser");
     setUser(null);
     router.push("/auth/login");
   };
 
-  const fetchTodos = async (userId: number, showLoading = false) => {
+  const fetchTodos = async (userId: string, showLoading = false) => {
     if (showLoading) setLoading(true);
     try {
-      const response = await fetch(`/api/todos?userId=${userId}`);
-      const data: TodoItem[] = await response.json();
-      setTodos(data);
+      const accessToken = localStorage.getItem("accessToken");
+      const response = await fetch(`/api/todos?userId=${userId}`, {
+        headers: {
+          "Authorization": `Bearer ${accessToken}`
+        }
+      });
+      const data = await response.json();
+      
+      // ✅ Ensure we always have an array
+      const todosArray = Array.isArray(data) ? data : [];
+      setTodos(todosArray);
     } catch (err) {
       console.error("Error fetching todos:", err);
+      setTodos([]); // Reset to empty array on error
     } finally {
       if (showLoading) setLoading(false);
     }
   };
 
   useEffect(() => {
+    setMounted(true);
+    
     const storedDarkMode = JSON.parse(
       localStorage.getItem("darkMode") || "true",
     );
@@ -103,13 +120,16 @@ export default function ProfilePage() {
   }, []);
 
   useEffect(() => {
+    const accessToken = localStorage.getItem("accessToken");
     const storedUser = JSON.parse(
       localStorage.getItem("currentUser") || "null",
     );
-    if (!storedUser) {
+    
+    if (!storedUser || !accessToken) {
       router.push("/auth/login");
       return;
     }
+    
     setUser(storedUser);
     fetchTodos(storedUser.id, true);
   }, [router]);
@@ -121,15 +141,18 @@ export default function ProfilePage() {
     return end;
   }, [today]);
 
+  // ✅ FIXED: Safe stats calculation with array check
   const stats = useMemo(() => {
-    const total = todos.length;
-    const completed = todos.filter((t) => t.completed).length;
+    const todosArray = Array.isArray(todos) ? todos : [];
+    
+    const total = todosArray.length;
+    const completed = todosArray.filter((t) => t.completed).length;
     const active = total - completed;
-    const overdue = todos.filter((t) => {
+    const overdue = todosArray.filter((t) => {
       const date = parseDate(t.dueDate);
       return date && date < today && !t.completed;
     }).length;
-    const todayCount = todos.filter((t) => {
+    const todayCount = todosArray.filter((t) => {
       const date = parseDate(t.dueDate);
       return (
         date &&
@@ -138,7 +161,7 @@ export default function ProfilePage() {
         !t.completed
       );
     }).length;
-    const highPriority = todos.filter(
+    const highPriority = todosArray.filter(
       (t) => !t.completed && (t.priority || "medium") === "high",
     ).length;
 
@@ -153,49 +176,81 @@ export default function ProfilePage() {
     };
   }, [todos, today, todayEnd]);
 
-  const recent = todos
-    .slice()
-    .sort((a, b) => (b.createdAt ?? b.id ?? 0) - (a.createdAt ?? a.id ?? 0))
-    .slice(0, 6);
+  // ✅ FIXED: Safe recent todos with array check
+  const recent = useMemo(() => {
+    const todosArray = Array.isArray(todos) ? todos : [];
+    return todosArray
+      .slice()
+      .sort((a, b) => (b.createdAt ?? b.id ?? 0) - (a.createdAt ?? a.id ?? 0))
+      .slice(0, 6);
+  }, [todos]);
 
-  const overdueTodos = todos
-    .filter((t) => {
-      const date = parseDate(t.dueDate);
-      return date && date < today && !t.completed;
-    })
-    .sort(
-      (a, b) =>
-        (parseDate(a.dueDate)?.getTime() ?? 0) -
-        (parseDate(b.dueDate)?.getTime() ?? 0),
-    )
-    .slice(0, 4);
+  // ✅ FIXED: Safe overdue todos with array check
+  const overdueTodos = useMemo(() => {
+    const todosArray = Array.isArray(todos) ? todos : [];
+    return todosArray
+      .filter((t) => {
+        const date = parseDate(t.dueDate);
+        return date && date < today && !t.completed;
+      })
+      .sort(
+        (a, b) =>
+          (parseDate(a.dueDate)?.getTime() ?? 0) -
+          (parseDate(b.dueDate)?.getTime() ?? 0),
+      )
+      .slice(0, 4);
+  }, [todos, today]);
 
-  const priorityCounts = ["high", "medium", "low"].map((level) => {
-    const count = todos.filter(
-      (t) => (t.priority || "medium") === level && !t.completed,
-    ).length;
-    return { level, count };
-  });
+  // ✅ FIXED: Safe priority counts with array check
+  const priorityCounts = useMemo(() => {
+    const todosArray = Array.isArray(todos) ? todos : [];
+    return ["high", "medium", "low"].map((level) => {
+      const count = todosArray.filter(
+        (t) => (t.priority || "medium") === level && !t.completed,
+      ).length;
+      return { level, count };
+    });
+  }, [todos]);
 
   const maxPriorityCount =
     priorityCounts.reduce((max, p) => Math.max(max, p.count), 1) || 1;
 
-  const next7Days = Array.from({ length: 7 }).map((_, idx) => {
-    const day = new Date(today);
-    day.setDate(today.getDate() + idx);
-    const end = new Date(day);
-    end.setDate(day.getDate() + 1);
-    const count = todos.filter((t) => {
-      const date = parseDate(t.dueDate);
-      return date && date >= day && date < end && !t.completed;
-    }).length;
-    return {
-      label: day.toLocaleDateString(undefined, { weekday: "short" }),
-      count,
-    };
-  });
+  // ✅ FIXED: Safe next 7 days with array check
+  const next7Days = useMemo(() => {
+    const todosArray = Array.isArray(todos) ? todos : [];
+    return Array.from({ length: 7 }).map((_, idx) => {
+      const day = new Date(today);
+      day.setDate(today.getDate() + idx);
+      const end = new Date(day);
+      end.setDate(day.getDate() + 1);
+      const count = todosArray.filter((t) => {
+        const date = parseDate(t.dueDate);
+        return date && date >= day && date < end && !t.completed;
+      }).length;
+      return {
+        label: day.toLocaleDateString(undefined, { weekday: "short" }),
+        count,
+      };
+    });
+  }, [todos, today]);
+
   const maxUpcomingCount =
     next7Days.reduce((max, d) => Math.max(max, d.count), 1) || 1;
+
+  // Show loading state on first render
+  if (!mounted || loading) {
+    return (
+      <div style={{ 
+        minHeight: "100vh", 
+        display: "flex", 
+        alignItems: "center", 
+        justifyContent: "center",
+        fontFamily: "system-ui, -apple-system, sans-serif"
+      }}>
+        <div>Loading profile...</div>
+      </div>
+    );
+  }
 
   return (
     <ThemeProvider theme={theme}>
@@ -271,7 +326,7 @@ export default function ProfilePage() {
                     variant="contained"
                     color="secondary"
                     startIcon={<Refresh />}
-                    onClick={() => fetchTodos(user?.id || 0, true)}
+                    onClick={() => fetchTodos(user?.id || "", true)}
                     sx={{ color: "#ffffff" }}
                   >
                     Refresh data
@@ -317,7 +372,7 @@ export default function ProfilePage() {
                       Email
                     </Typography>
                     <Typography variant="body2" gutterBottom>
-                      Not provided
+                      {user?.email || "Not provided"}
                     </Typography>
                     <Divider sx={{ my: 2 }} />
                     <Stack spacing={1}>

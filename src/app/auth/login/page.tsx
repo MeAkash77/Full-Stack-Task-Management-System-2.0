@@ -23,19 +23,22 @@ import NavBar from "@/app/components/NavBar";
 import { getAppTheme } from "@/app/theme";
 
 export default function LoginPage() {
+  const [mounted, setMounted] = useState(false);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
-  const [isDarkMode, setIsDarkMode] = useState(false);
-  const [user, setUser] = useState<{ id: number; username: string } | null>(
+  const [isDarkMode, setIsDarkMode] = useState(true);
+  const [user, setUser] = useState<{ id: string; username: string } | null>(
     null,
   );
   const router = useRouter();
-  const theme = useMemo(() => getAppTheme(isDarkMode), [isDarkMode]);
+  
+  // Only create theme after mounting to avoid hydration mismatch
+  const theme = useMemo(() => mounted ? getAppTheme(isDarkMode) : getAppTheme(true), [isDarkMode, mounted]);
 
-  const fieldBaseSx = {
+  const fieldBaseSx = mounted ? {
     "& .MuiOutlinedInput-root": {
       backgroundColor: isDarkMode ? "#1a2f26" : "#ffffff",
     },
@@ -58,7 +61,7 @@ export default function LoginPage() {
     "& .MuiSvgIcon-root": {
       color: isDarkMode ? "#ffffff" : theme.palette.text.primary,
     },
-  };
+  } : {};
 
   const toggleDarkMode = () => {
     const next = !isDarkMode;
@@ -67,22 +70,31 @@ export default function LoginPage() {
   };
 
   const logout = () => {
+    localStorage.removeItem("accessToken");
+    localStorage.removeItem("refreshToken");
     localStorage.removeItem("currentUser");
     setUser(null);
     router.push("/auth/login");
   };
 
   useEffect(() => {
+    setMounted(true);
+    
     const storedDarkMode = JSON.parse(
       localStorage.getItem("darkMode") || "true",
     );
     setIsDarkMode(storedDarkMode);
 
+    const accessToken = localStorage.getItem("accessToken");
     const storedUser = JSON.parse(
       localStorage.getItem("currentUser") || "null",
     );
-    if (storedUser) setUser(storedUser);
-  }, []);
+    
+    if (storedUser && accessToken) {
+      setUser(storedUser);
+      router.push("/home");
+    }
+  }, [router]);
 
   const handleLogin = async () => {
     if (!username || !password) {
@@ -105,7 +117,11 @@ export default function LoginPage() {
       const data = await response.json();
 
       if (response.ok) {
+        // 🔐 Store JWT tokens
+        localStorage.setItem("accessToken", data.accessToken);
+        localStorage.setItem("refreshToken", data.refreshToken);
         localStorage.setItem("currentUser", JSON.stringify(data.user));
+        
         setUser(data.user);
         router.push("/home");
       } else {
@@ -118,6 +134,21 @@ export default function LoginPage() {
       setIsLoading(false);
     }
   };
+
+  // Show loading state on first render to prevent hydration mismatch
+  if (!mounted) {
+    return (
+      <div style={{ 
+        minHeight: "100vh", 
+        display: "flex", 
+        alignItems: "center", 
+        justifyContent: "center",
+        fontFamily: "system-ui, -apple-system, sans-serif"
+      }}>
+        <div>Loading...</div>
+      </div>
+    );
+  }
 
   return (
     <ThemeProvider theme={theme}>
@@ -197,7 +228,9 @@ export default function LoginPage() {
               </Typography>
               <Typography variant="body2" sx={{ opacity: 0.8 }}>
                 Use your Flowlist credentials to continue. Need an account?{" "}
-                <Link href="/auth/register">Register</Link>
+                <Link href="/auth/register" style={{ color: theme.palette.primary.main }}>
+                  Register
+                </Link>
               </Typography>
             </Stack>
 
@@ -209,14 +242,24 @@ export default function LoginPage() {
 
             <Stack spacing={2}>
               <TextField
+                id="username"
+                name="username"
                 label="Username"
                 fullWidth
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && handleLogin()}
                 sx={fieldBaseSx}
+                disabled={isLoading}
+                required
+                autoComplete="username"
+                inputProps={{
+                  'aria-label': 'username',
+                }}
               />
               <TextField
+                id="password"
+                name="password"
                 label="Password"
                 type={showPassword ? "text" : "password"}
                 fullWidth
@@ -224,11 +267,19 @@ export default function LoginPage() {
                 onChange={(e) => setPassword(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && handleLogin()}
                 sx={fieldBaseSx}
+                disabled={isLoading}
+                required
+                autoComplete="current-password"
+                inputProps={{
+                  'aria-label': 'password',
+                }}
                 InputProps={{
                   endAdornment: (
                     <InputAdornment position="end">
                       <IconButton
                         onClick={() => setShowPassword((prev) => !prev)}
+                        edge="end"
+                        aria-label="toggle password visibility"
                       >
                         {showPassword ? <VisibilityOff /> : <Visibility />}
                       </IconButton>
@@ -241,15 +292,26 @@ export default function LoginPage() {
                 fullWidth
                 onClick={handleLogin}
                 disabled={isLoading}
-                sx={{ color: "#ffffff" }}
+                size="large"
+                sx={{ 
+                  mt: 2,
+                  color: "#ffffff",
+                  '&:disabled': {
+                    opacity: 0.6
+                  }
+                }}
               >
                 {isLoading ? "Signing in..." : "Login"}
               </Button>
             </Stack>
 
-            <Stack direction="row" justifyContent="space-between" mt={2}>
-              <Link href="/auth/register">Create account</Link>
-              <Link href="/auth/forgot-password">Forgot password?</Link>
+            <Stack direction="row" justifyContent="space-between" mt={3}>
+              <Link href="/auth/register" style={{ color: theme.palette.primary.main }}>
+                Create account
+              </Link>
+              <Link href="/auth/forgot-password" style={{ color: theme.palette.primary.main }}>
+                Forgot password?
+              </Link>
             </Stack>
 
             {isLoading && <LinearProgress sx={{ mt: 2 }} />}

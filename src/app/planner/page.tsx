@@ -27,7 +27,7 @@ import NavBar from "../components/NavBar";
 import { getAppTheme } from "../theme";
 import { TodoItem } from "@/types/todo";
 
-const parseDate = (value?: string) => {
+const parseDate = (value?: string | null) => {
   if (!value) return null;
   const parsed = new Date(value);
   return Number.isNaN(parsed.getTime()) ? null : parsed;
@@ -37,13 +37,17 @@ const startOfDay = (date: Date) =>
   new Date(date.getFullYear(), date.getMonth(), date.getDate());
 
 export default function PlannerPage() {
+  const [mounted, setMounted] = useState(false);
   const [todos, setTodos] = useState<TodoItem[]>([]);
-  const [user, setUser] = useState<{ id: number; username: string } | null>(
+  const [user, setUser] = useState<{ id: string; username: string } | null>(
     null,
   );
-  const [isDarkMode, setIsDarkMode] = useState(false);
+  const [isDarkMode, setIsDarkMode] = useState(true);
   const [loading, setLoading] = useState(true);
-  const theme = useMemo(() => getAppTheme(isDarkMode), [isDarkMode]);
+  const theme = useMemo(() => 
+    mounted ? getAppTheme(isDarkMode) : getAppTheme(true), 
+    [isDarkMode, mounted]
+  );
   const router = useRouter();
 
   const chipGroupSx = {
@@ -74,25 +78,39 @@ export default function PlannerPage() {
   };
 
   const logout = () => {
+    localStorage.removeItem("accessToken");
+    localStorage.removeItem("refreshToken");
     localStorage.removeItem("currentUser");
     setUser(null);
     router.push("/auth/login");
   };
 
-  const fetchTodos = async (userId: number, showLoading = false) => {
+  // ✅ FIXED: Safe fetchTodos function
+  const fetchTodos = async (userId: string, showLoading = false) => {
     if (showLoading) setLoading(true);
     try {
-      const response = await fetch(`/api/todos?userId=${userId}`);
-      const data: TodoItem[] = await response.json();
-      setTodos(data);
+      const accessToken = localStorage.getItem("accessToken");
+      const response = await fetch(`/api/todos?userId=${userId}`, {
+        headers: {
+          "Authorization": `Bearer ${accessToken}`
+        }
+      });
+      const data = await response.json();
+      
+      // Ensure we always have an array
+      const todosArray = Array.isArray(data) ? data : [];
+      setTodos(todosArray);
     } catch (err) {
       console.error("Error fetching todos:", err);
+      setTodos([]); // Reset to empty array on error
     } finally {
       if (showLoading) setLoading(false);
     }
   };
 
   useEffect(() => {
+    setMounted(true);
+    
     const storedDarkMode = JSON.parse(
       localStorage.getItem("darkMode") || "true",
     );
@@ -100,10 +118,12 @@ export default function PlannerPage() {
   }, []);
 
   useEffect(() => {
+    const accessToken = localStorage.getItem("accessToken");
     const storedUser = JSON.parse(
       localStorage.getItem("currentUser") || "null",
     );
-    if (!storedUser) {
+    
+    if (!storedUser || !accessToken) {
       router.push("/auth/login");
       return;
     }
@@ -112,7 +132,11 @@ export default function PlannerPage() {
     fetchTodos(storedUser.id, true);
   }, [router]);
 
+  // ✅ FIXED: Safe week plan with array check
   const weekPlan = useMemo(() => {
+    // Ensure todos is an array
+    const todosArray = Array.isArray(todos) ? todos : [];
+    
     const start = startOfDay(new Date());
     return Array.from({ length: 7 }).map((_, idx) => {
       const current = new Date(start);
@@ -120,7 +144,7 @@ export default function PlannerPage() {
       const nextDay = new Date(current);
       nextDay.setDate(current.getDate() + 1);
 
-      const dayTodos = todos
+      const dayTodos = todosArray
         .filter((todo) => {
           const date = parseDate(todo.dueDate);
           return (
@@ -148,11 +172,29 @@ export default function PlannerPage() {
     });
   }, [todos]);
 
-  const backlog = todos.filter((todo) => !todo.dueDate && !todo.completed);
-  const completed = todos.filter((todo) => todo.completed);
-  const highPriority = todos.filter(
+  // ✅ FIXED: Safe array operations for all todo collections
+  const todosArray = Array.isArray(todos) ? todos : [];
+  
+  const backlog = todosArray.filter((todo) => !todo.dueDate && !todo.completed);
+  const completed = todosArray.filter((todo) => todo.completed);
+  const highPriority = todosArray.filter(
     (todo) => !todo.completed && (todo.priority || "medium") === "high",
   );
+
+  // Show loading state on first render
+  if (!mounted || loading) {
+    return (
+      <div style={{ 
+        minHeight: "100vh", 
+        display: "flex", 
+        alignItems: "center", 
+        justifyContent: "center",
+        fontFamily: "system-ui, -apple-system, sans-serif"
+      }}>
+        <div>Loading planner...</div>
+      </div>
+    );
+  }
 
   return (
     <ThemeProvider theme={theme}>
@@ -229,7 +271,7 @@ export default function PlannerPage() {
                     variant="contained"
                     color="secondary"
                     startIcon={<Refresh />}
-                    onClick={() => fetchTodos(user?.id || 0, true)}
+                    onClick={() => fetchTodos(user?.id || "", true)}
                     sx={{ color: "#ffffff" }}
                   >
                     Refresh
@@ -266,7 +308,7 @@ export default function PlannerPage() {
                       </Typography>
                     </Stack>
                     <Chip
-                      label={`${todos.length} tasks tracked`}
+                      label={`${todosArray.length} tasks tracked`}
                       variant="outlined"
                     />
                   </Stack>
@@ -433,16 +475,16 @@ export default function PlannerPage() {
                       <LinearProgress
                         variant="determinate"
                         value={
-                          todos.length
+                          todosArray.length
                             ? Math.round(
-                                (completed.length / todos.length) * 100,
+                                (completed.length / todosArray.length) * 100,
                               )
                             : 0
                         }
                         sx={{ height: 10, borderRadius: 5 }}
                       />
                       <Typography variant="caption" sx={{ opacity: 0.8 }}>
-                        {completed.length} of {todos.length} tasks completed
+                        {completed.length} of {todosArray.length} tasks completed
                       </Typography>
                     </Stack>
                     <Divider sx={{ my: 2 }} />
